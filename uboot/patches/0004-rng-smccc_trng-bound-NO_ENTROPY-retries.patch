@@ -1,0 +1,43 @@
+From: Nerves KickPi K2B <nerves@kickpi-k2b>
+Subject: [PATCH] rng: smccc_trng: bound NO_ENTROPY retries
+
+The read loop retried a NO_ENTROPY response forever. booti seeds
+KASLR from this driver, so a persistently failing TRNG would hang
+boot. Cap the retries and return -EIO; boot then continues unseeded.
+---
+diff --git a/drivers/rng/smccc_trng.c b/drivers/rng/smccc_trng.c
+index 1da1aff..ac52079 100644
+--- a/drivers/rng/smccc_trng.c
++++ b/drivers/rng/smccc_trng.c
+@@ -32,6 +32,11 @@
+ #define ARM_SMCCC_RET_TRNG_INVALID_PARAMETER	((ulong)-2)
+ #define ARM_SMCCC_RET_TRNG_NO_ENTROPY		((ulong)-3)
+ 
++/* Bound the NO_ENTROPY retry so a persistently failing TRNG cannot hang
++ * boot (booti seeds KASLR from this driver). Enough to ride out a
++ * transient; a real failure returns -EIO and boot continues unseeded. */
++#define TRNG_NO_ENTROPY_MAX_RETRIES		100U
++
+ #define TRNG_MAJOR_MASK		GENMASK(30, 16)
+ #define TRNG_MAJOR_SHIFT	16
+ #define TRNG_MINOR_MASK		GENMASK(15, 0)
+@@ -86,6 +91,7 @@ static int smccc_trng_read(struct udevice *dev, void *data, size_t len)
+ 	size_t rem = len;
+ 	size_t max_sz;
+ 	size_t (*copy_sample)(u8 **ptr, size_t size, ulong *rnd);
++	unsigned int no_entropy_retries = 0;
+ 
+ 	if (priv->smc64) {
+ 		copy_sample = smc64_copy_sample;
+@@ -104,8 +110,11 @@ static int smccc_trng_read(struct udevice *dev, void *data, size_t len)
+ 
+ 		switch (res.a0) {
+ 		case ARM_SMCCC_RET_TRNG_SUCCESS:
++			no_entropy_retries = 0;
+ 			break;
+ 		case ARM_SMCCC_RET_TRNG_NO_ENTROPY:
++			if (++no_entropy_retries > TRNG_NO_ENTROPY_MAX_RETRIES)
++				return -EIO;
+ 			continue;
+ 		default:
+ 			return -EIO;

@@ -74,10 +74,20 @@ NERVES_UBOOT_ENV_HASH = \
 	$(call nerves-hash,$(NERVES_DEFCONFIG_DIR)/uboot/uboot.env)
 NERVES_UBOOT_ENV_STAMP = $(HOST_UBOOT_TOOLS_DIR)/.nerves-env-hash
 
+# TF-A patches, applied at extract via BR2_GLOBAL_PATCH_DIR. Both the
+# U-Boot input hash (the U-Boot build bundles BL31) and the TF-A input
+# hash below invalidate on these, so name the set once.
+NERVES_TFA_PATCHES = \
+	$(sort $(wildcard $(NERVES_DEFCONFIG_DIR)/tfa/patches/arm-trusted-firmware/*.patch))
+
 # U-Boot: uboot/patches/*.patch, applied at extract, and the config
-# fragment, merged at configure.
+# fragment, merged at configure. The U-Boot build bundles BL31 into
+# u-boot-sunxi-with-spl.bin (the SPL FIT), so the TF-A patches are inputs
+# too — without them a TF-A-only change rebuilds bl31.bin but U-Boot
+# keeps the old copy embedded in the combined image.
 NERVES_UBOOT_INPUT_HASH = \
 	$(call nerves-hash,$(sort $(wildcard $(NERVES_DEFCONFIG_DIR)/uboot/patches/*.patch)) \
+		$(NERVES_TFA_PATCHES) \
 		$(NERVES_DEFCONFIG_DIR)/uboot/fragment.config)
 NERVES_UBOOT_STAMP = $(UBOOT_DIR)/.nerves-uboot-input-hash
 
@@ -88,10 +98,16 @@ NERVES_SEEKWAVE_FW_HASH = \
 NERVES_SEEKWAVE_FW_DIR = $(BUILD_DIR)/seekwave-firmware-$(SEEKWAVE_FIRMWARE_VERSION)
 NERVES_SEEKWAVE_FW_STAMP = $(NERVES_SEEKWAVE_FW_DIR)/.nerves-pkg-hash
 
+# TF-A tree staleness. The CE TRNG driver is a new source file, so an
+# edited patch that never re-extracts would silently ship stale BL31.
+NERVES_TFA_PATCH_HASH = $(call nerves-hash,$(NERVES_TFA_PATCHES))
+NERVES_TFA_PATCH_STAMP = $(ARM_TRUSTED_FIRMWARE_DIR)/.nerves-tfa-patch-hash
+
 NERVES_STALE_DISCARDED := \
 	$(call nerves-discard-if-stale,$(LINUX_DIR),$(NERVES_LINUX_PATCH_STAMP),$(NERVES_LINUX_PATCH_HASH)) \
 	$(call nerves-discard-if-stale,$(UBOOT_DIR),$(NERVES_UBOOT_STAMP),$(NERVES_UBOOT_INPUT_HASH)) \
 	$(call nerves-discard-if-stale,$(HOST_UBOOT_TOOLS_DIR),$(NERVES_UBOOT_ENV_STAMP),$(NERVES_UBOOT_ENV_HASH)) \
+	$(call nerves-discard-if-stale,$(ARM_TRUSTED_FIRMWARE_DIR),$(NERVES_TFA_PATCH_STAMP),$(NERVES_TFA_PATCH_HASH)) \
 	$(call nerves-discard-if-stale,$(NERVES_SEEKWAVE_FW_DIR),$(NERVES_SEEKWAVE_FW_STAMP),$(NERVES_SEEKWAVE_FW_HASH))
 
 define NERVES_LINUX_RECORD_PATCH_HASH
@@ -113,3 +129,8 @@ define NERVES_SEEKWAVE_FW_RECORD_HASH
 	echo $(NERVES_SEEKWAVE_FW_HASH) > $(NERVES_SEEKWAVE_FW_STAMP)
 endef
 SEEKWAVE_FIRMWARE_POST_EXTRACT_HOOKS += NERVES_SEEKWAVE_FW_RECORD_HASH
+
+define NERVES_TFA_RECORD_PATCH_HASH
+	echo $(NERVES_TFA_PATCH_HASH) > $(NERVES_TFA_PATCH_STAMP)
+endef
+ARM_TRUSTED_FIRMWARE_POST_PATCH_HOOKS += NERVES_TFA_RECORD_PATCH_HASH

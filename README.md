@@ -33,6 +33,7 @@ instead.
 | IR | Receiver on PH10, NEC decode |
 | UART console | UART0, 115200 — GPIO header pins 15 (RX) / 17 (TX) / 19 (GND) |
 | LED | Blue status LED (PI16), heartbeat trigger |
+| Hardware RNG | Crypto-engine TRNG via BL31 SMCCC — `/dev/hwrng` and KASLR seed |
 
 ## Boot flow and disk layout
 
@@ -56,6 +57,33 @@ from this system always boots regardless of eMMC contents. The boot
 script selects kernel, dtb and root from the boot medium; full
 eMMC-primary operation (environment writes, application data and the
 extlinux fallback all still name the SD paths) is future work.
+
+## Hardware entropy
+
+BL31 (TF-A) implements the Arm SMCCC TRNG interface backed by the
+H616/H618 crypto-engine TRNG (`tfa/patches/arm-trusted-firmware/0001`).
+The normal world consumes it two ways:
+
+- Linux exposes it as `/dev/hwrng` through the `arm_smccc_trng` driver.
+- U-Boot binds it as a `DM_RNG` device and `booti` seeds the kernel's
+  KASLR from it. This needs `CONFIG_ARM_SMCCC_FEATURES` and
+  `CONFIG_RNG_SMCCC_TRNG` (`uboot/fragment.config`) plus `arm,psci-1.0`
+  in the control device tree (`uboot/patches/0003`), which U-Boot's
+  SMCCC feature discovery requires to bind the driver.
+
+The in-kernel crypto-engine driver is disabled
+(`# CONFIG_CRYPTO_DEV_SUN8I_CE is not set` in `linux/nerves.config`) so
+BL31 owns the engine; if Linux also bound it the two would race the same
+task-queue registers, clocks and reset. As the sole user, BL31 re-enables
+the CE clocks on each request (nothing else holds them on) and, at boot,
+advertises the TRNG only after a self-test passes — a dead engine then
+binds no RNG device and the normal world skips seeding rather than
+hanging.
+
+This is a hardware entropy *source*, not a secure or attested one: the CE
+registers and BL31's descriptor/output buffers are reachable from the
+non-secure world, so a hardware RNG for KASLR and `/dev/hwrng` is what it
+provides, not a secure-world trust boundary.
 
 ## Board support provenance
 

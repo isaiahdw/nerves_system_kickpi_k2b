@@ -90,7 +90,7 @@ defmodule NervesSystemKickpiK2b.MixProject do
   defp package do
     [
       files: package_files(),
-      licenses: ["GPL-2.0-only", "GPL-2.0-or-later"],
+      licenses: ["BSD-3-Clause", "GPL-2.0-only", "GPL-2.0-or-later"],
       links: %{
         "GitHub" => @source_url
       }
@@ -103,6 +103,7 @@ defmodule NervesSystemKickpiK2b.MixProject do
       "linux",
       "package",
       "rootfs_overlay",
+      "tfa/patches",
       "uboot",
       "busybox.fragment",
       "CHANGELOG.md",

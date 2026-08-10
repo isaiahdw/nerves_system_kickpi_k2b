@@ -8,7 +8,8 @@ texts are in LICENSES/.
 | Build configuration, fwup configs, scripts, docs (this project's own files) | GPL-2.0-or-later |
 | `linux/0001-*.patch` (device tree), `linux/0002/0003-*.patch` (Maxio PHY driver, dwmac-sun8i fix) | GPL-2.0-only (kernel license) |
 | `linux/0004-*.patch` (Seekwave VS6621S driver tree, vendor GPL source) | GPL-2.0 per the SPDX identifiers in the source files |
-| `uboot/patches/*.patch` (board + Armbian patches) | GPL-2.0-or-later (U-Boot license) |
+| `uboot/patches/*.patch` (board + Armbian patches, PSCI/RNG fixups) | GPL-2.0-or-later (U-Boot license) |
+| `tfa/patches/arm-trusted-firmware/0001-*.patch` (CE TRNG driver) | BSD-3-Clause (TF-A license) — independent implementation, see the file header |
 | `linux/0005/0006-*.patch` (H616 PWM driver + DT nodes) | GPL-2.0-only (kernel license) |
 | `linux/0101-0141-*.patch` (DE33/HDMI display series) | GPL-2.0-only; dt-binding docs dual GPL-2.0-only OR BSD-2-Clause |
 

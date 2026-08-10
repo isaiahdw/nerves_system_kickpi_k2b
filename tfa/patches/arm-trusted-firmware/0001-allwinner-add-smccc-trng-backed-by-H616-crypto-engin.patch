@@ -1,0 +1,402 @@
+From: Nerves KickPi K2B <nerves@kickpi-k2b>
+Subject: [PATCH] allwinner: add SMCCC TRNG backed by the H616/H618 crypto engine
+
+BL31 implements the SMCCC TRNG interface using the CE TRNG_V2 block.
+It is the sole CE user (the kernel driver must be disabled), re-enables
+the CE clocks per call, self-tests before advertising the TRNG, health-
+checks each draw, and quiesces the engine on failure.
+---
+diff --git a/plat/allwinner/sun50i_h616/platform.mk b/plat/allwinner/sun50i_h616/platform.mk
+index 6f44e8c..cce74c3 100644
+--- a/plat/allwinner/sun50i_h616/platform.mk
++++ b/plat/allwinner/sun50i_h616/platform.mk
+@@ -23,3 +23,7 @@ BL31_SOURCES		+=	common/fdt_wrappers.c			\
+ 				drivers/allwinner/sunxi_rsb.c		\
+ 				drivers/mentor/i2c/mi2cv.c		\
+ 				${AW_PLAT}/${PLAT}/sunxi_h616_dtb.c
++
++# SMCCC TRNG backed by the CE TRNG_V2 block (non-secure register bank).
++TRNG_SUPPORT		:=	1
++BL31_SOURCES		+=	${AW_PLAT}/common/sunxi_trng.c
+diff --git a/plat/allwinner/common/sunxi_trng.c b/plat/allwinner/common/sunxi_trng.c
+new file mode 100644
+index 0000000..6b5b001
+--- /dev/null
++++ b/plat/allwinner/common/sunxi_trng.c
+@@ -0,0 +1,376 @@
++/*
++ * Copyright (c) 2026, Nerves KickPi K2B port. All rights reserved.
++ *
++ * SPDX-License-Identifier: BSD-3-Clause
++ *
++ * Provenance: the CE register offsets, task-descriptor layout, algorithm
++ * id, word-addressed DMA fields and the submission and clock/reset
++ * sequence are the block's hardware register interface, taken from Linux's
++ * GPL-2.0 drivers/crypto/allwinner/sun8i-ce -- the reference for
++ * programming this engine. The code here is an independent implementation
++ * for TF-A, written in TF-A idioms, not a copy or translation of that
++ * driver.
++ *
++ * SMCCC TRNG entropy source backed by the Allwinner H616/H618 Crypto
++ * Engine (CE) TRNG_V2 block. BL31 drives the CE through the same
++ * non-secure register bank (0x01904000) the Linux sun8i-ce driver uses,
++ * whose task-submission sequence is known to work. The normal world
++ * consumes entropy through the SMCCC TRNG interface (U-Boot
++ * RNG_SMCCC_TRNG for the KASLR seed, Linux arm_smccc_trng).
++ *
++ * REQUIREMENT: the kernel CE driver must be disabled
++ * (CONFIG_CRYPTO_DEV_SUN8I_CE not set) so BL31 owns the engine. If Linux
++ * also binds the CE it will drive the same flow-3 registers, clocks and
++ * reset and race every SMC. This makes BL31 the sole CE user, so its
++ * runtime PM no longer holds the clocks; ce_run_trng() re-enables them
++ * per call.
++ *
++ * THREAT MODEL: the descriptor, output buffer and CE/CCU registers are
++ * non-secure-accessible, so this provides a hardware entropy *source*,
++ * not a secure or attested one — privileged normal-world code can
++ * observe or perturb an in-flight task. It is a drop-in RNG for KASLR
++ * seeding and /dev/hwrng, not a basis for a secure-world trust boundary.
++ *
++ * The CE has no output FIFO: TRNG results are delivered only by the
++ * engine's internal DMA into memory, described by a 44-word task
++ * descriptor. BL31 runs in DRAM on the H616/H618, so the descriptor and the
++ * output buffer are ordinary BL31 .bss and reachable by the CE's MBUS
++ * master; the code cleans the descriptor and invalidates the output
++ * buffer around each run.
++ *
++ * Every failure path returns false so the framework answers NO_ENTROPY
++ * and the normal world falls back gracefully (KASLR simply stays
++ * unseeded, exactly as before this driver existed). Nothing here blocks
++ * unbounded.
++ */
++
++#include <assert.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <string.h>
++
++#include <arch_helpers.h>
++#include <lib/mmio.h>
++#include <lib/smccc.h>
++#include <lib/utils_def.h>
++#include <plat/common/platform.h>
++#include <services/trng_svc.h>
++
++#include <sunxi_mmap.h>
++
++/* Non-secure register bank of the Crypto Engine — the same one the Linux
++ * sun8i-ce driver drives, so the task-submission sequence here is known
++ * to work. The kernel CE driver is left disabled, so BL31 owns it. (The
++ * H616/H618 also has a secure bank 0x800 higher, but it is unproven and was
++ * observed not to complete tasks in EL3, so use the proven bank.) */
++#define SUNXI_CE_BASE			0x01904000U
++
++/* CE task-interface registers (offsets within a bank). */
++#define CE_REG_TDQ			0x00	/* task descriptor queue addr */
++#define CE_REG_ICR			0x08	/* interrupt control (mask) */
++#define CE_REG_ISR			0x0c	/* interrupt status (W1C) */
++#define CE_REG_TLR			0x10	/* task load / start */
++#define CE_REG_TSR			0x14	/* task status */
++#define CE_REG_ESR			0x18	/* error status */
++
++/* TRNG_V2 algorithm id, written into the descriptor's common-control
++ * word and echoed into the low bits of TLR on H6-family engines. */
++#define CE_ALG_TRNG_V2			0x1c
++
++/* Completion-interrupt bit in the descriptor's common-control word. The
++ * Linux driver sets it and enables the matching CE_ICR bit; on this
++ * engine the per-flow CE_ISR completion status only latches when the
++ * interrupt is enabled, so BL31 does the same and polls CE_ISR (the GIC
++ * line is never routed to a handler in EL3, and CE_ISR is cleared after
++ * every task so nothing stays asserted into the normal world). */
++#define CE_COMM_INT			BIT(31)
++
++/* Flow (channel) reserved for the RNG, matching the Linux driver. */
++#define CE_RNG_FLOW			3
++
++/* Per-flow error field in ESR on H6 (8 bits per flow). */
++#define CE_ESR_FLOW_ERR(v, flow)	(((v) >> ((flow) * 8)) & 0xffU)
++
++/* CCU registers used to clock and un-reset the engine. */
++#define CCU_CE_CLK_REG			(SUNXI_CCU_BASE + 0x0680)
++#define CCU_CE_BGR_REG			(SUNXI_CCU_BASE + 0x068c)
++#define CCU_MBUS_GATE_REG		(SUNXI_CCU_BASE + 0x0804)
++
++#define CCU_CE_CLK_GATE			BIT(31)	/* module clock enable */
++/* mux bit24 = 0 -> osc24M (always-on HOSC); M/N dividers left at 0.
++ * The CE mod clock only sequences the task engine; the TRNG noise
++ * source is the RTC internal oscillator, so 24 MHz is ample and avoids
++ * depending on any PLL being up this early. */
++#define CCU_CE_BGR_BUS_GATE		BIT(0)	/* bus clock gate */
++#define CCU_CE_BGR_RST_DEASSERT		BIT(16)	/* de-assert reset (1 = out) */
++#define CCU_MBUS_CE_GATE		BIT(2)	/* MBUS access for CE */
++
++/* Bounded poll for task completion. The engine finishes a small TRNG
++ * task in microseconds; this cap only exists so a wedged engine cannot
++ * hang BL31. Expressed as a spin count, not a timer, so it works before
++ * the delay timer is guaranteed set up. */
++#define CE_POLL_ITERATIONS		100000U
++
++/* One CE scatter/gather entry: word address and length in words. */
++struct ce_sg {
++	uint32_t addr;
++	uint32_t len;
++} __packed;
++
++#define CE_MAX_SG			8
++
++/* CE task descriptor (44 words: 8 header + 8+8 scatter/gather entries +
++ * next + 3 reserved), matching the layout the Linux sun8i-ce driver
++ * programs. */
++struct ce_task {
++	uint32_t t_id;
++	uint32_t t_common_ctl;
++	uint32_t t_sym_ctl;
++	uint32_t t_asym_ctl;
++	uint32_t t_key;
++	uint32_t t_iv;
++	uint32_t t_ctr;
++	uint32_t t_dlen;
++	struct ce_sg t_src[CE_MAX_SG];
++	struct ce_sg t_dst[CE_MAX_SG];
++	uint32_t next;
++	uint32_t reserved[3];
++} __packed;
++
++/* Bytes drawn from the engine per run; a multiple of 32 as the TRNG
++ * requires. 128 amortises the per-task overhead across 16 8-byte
++ * words handed to the framework. */
++#define CE_TRNG_CHUNK			128U
++
++static struct ce_task ce_task_buf __aligned(CACHE_WRITEBACK_GRANULE);
++static uint8_t ce_out_buf[CE_TRNG_CHUNK] __aligned(CACHE_WRITEBACK_GRANULE);
++
++/* Leftover entropy between plat_get_entropy() calls. */
++static uint8_t entropy_pool[CE_TRNG_CHUNK];
++static size_t entropy_avail;
++
++/* Last accepted chunk, to reject a task that reports done but returns the
++ * same block again (a stuck engine). */
++static uint8_t last_block[CE_TRNG_CHUNK];
++static bool have_last;
++
++DEFINE_SVC_UUID2(_plat_trng_uuid,
++	0x1b1a4c9f, 0x6c11, 0x4d3a, 0x9e, 0x21,
++	0x00, 0x00, 0x00, 0x00, 0x16, 0x18
++);
++uuid_t plat_trng_uuid;
++
++/* CE task-queue / task-load registers take word addresses (phys >> 2)
++ * on the H616/H618 ("needs_word_addresses"). BL31 is flat-mapped, so the
++ * virtual address is the physical address. */
++static inline uint32_t ce_word_addr(const void *p)
++{
++	return (uint32_t)((uintptr_t)p >> 2);
++}
++
++static void ce_enable_clocks(void)
++{
++	uint32_t v;
++
++	/* Bus clock on, reset de-asserted. */
++	v = mmio_read_32(CCU_CE_BGR_REG);
++	v |= CCU_CE_BGR_BUS_GATE | CCU_CE_BGR_RST_DEASSERT;
++	mmio_write_32(CCU_CE_BGR_REG, v);
++
++	/* MBUS path for the engine's DMA. */
++	v = mmio_read_32(CCU_MBUS_GATE_REG);
++	v |= CCU_MBUS_CE_GATE;
++	mmio_write_32(CCU_MBUS_GATE_REG, v);
++
++	/* Module clock: source osc24M (mux=0), no division, gate on. */
++	mmio_write_32(CCU_CE_CLK_REG, CCU_CE_CLK_GATE);
++}
++
++/*
++ * Abort any in-flight task and its DMA after a failure: disable the flow
++ * completion, assert the engine reset (which stops the MBUS master so a
++ * late write cannot land in ce_out_buf during the next request), and
++ * scrub the buffer. The next ce_enable_clocks() de-asserts the reset.
++ */
++static void ce_quiesce(void)
++{
++	uint32_t v;
++
++	mmio_write_32(SUNXI_CE_BASE + CE_REG_ICR,
++		      mmio_read_32(SUNXI_CE_BASE + CE_REG_ICR) & ~BIT(CE_RNG_FLOW));
++
++	v = mmio_read_32(CCU_CE_BGR_REG);
++	v &= ~CCU_CE_BGR_RST_DEASSERT;
++	mmio_write_32(CCU_CE_BGR_REG, v);
++	dsbsy();
++
++	memset(ce_out_buf, 0, sizeof(ce_out_buf));
++	flush_dcache_range((uintptr_t)ce_out_buf, sizeof(ce_out_buf));
++	dsbsy();
++}
++
++/*
++ * Online health test: reject a constant chunk, the signature of a dead
++ * noise source (the TRNG_V2 returns a fixed value when its RC-oscillator
++ * source is not running). This is a liveness/sanity check, not a full
++ * AIS-31/NIST test suite and not a conditioner: it only catches the gross
++ * failure mode that would otherwise feed a fixed value to the normal
++ * world. The raw CE output is passed through unconditioned.
++ */
++static bool ce_output_healthy(void)
++{
++	size_t i;
++
++	for (i = 1U; i < sizeof(ce_out_buf); i++) {
++		if (ce_out_buf[i] != ce_out_buf[0]) {
++			return true;
++		}
++	}
++
++	return false;
++}
++
++/*
++ * Run one TRNG task, filling ce_out_buf with CE_TRNG_CHUNK bytes.
++ * Returns true on success. Bounded; never hangs.
++ */
++static bool ce_run_trng(void)
++{
++	struct ce_task *t = &ce_task_buf;
++	uint32_t status, esr;
++	unsigned int i;
++
++	/* Re-enable the CE clocks on every call: BL31 enables them once at
++	 * boot, but Linux gates them at "Disabling unused clocks" because the
++	 * kernel CE driver is disabled (BL31 owns the engine), so by runtime
++	 * the one-time enable has been undone. Re-asserting the gates here is
++	 * idempotent and cheap, and nothing in the normal world drives the
++	 * engine so there is no operation to race. */
++	ce_enable_clocks();
++
++	memset(t, 0, sizeof(*t));
++	t->t_id = CE_RNG_FLOW;
++	t->t_common_ctl = CE_ALG_TRNG_V2 | CE_COMM_INT;
++	t->t_dlen = CE_TRNG_CHUNK;		/* H6 TRNG length is in bytes */
++	t->t_dst[0].addr = ce_word_addr(ce_out_buf);
++	t->t_dst[0].len = CE_TRNG_CHUNK / 4U;	/* dst length in words */
++
++	/* Sentinel the output region before the task: a run that reports
++	 * completion without actually writing DMA then leaves a constant
++	 * block that the health check rejects, instead of the previous run's
++	 * (valid-looking) output being accepted a second time. */
++	memset(ce_out_buf, 0, sizeof(ce_out_buf));
++
++	/* Publish the descriptor and the sentinelled output region so the
++	 * engine's DMA write is not masked by a dirty cache line. */
++	flush_dcache_range((uintptr_t)t, sizeof(*t));
++	flush_dcache_range((uintptr_t)ce_out_buf, sizeof(ce_out_buf));
++	dsbsy();
++
++	/* Enable the per-flow completion status (see CE_COMM_INT). */
++	mmio_write_32(SUNXI_CE_BASE + CE_REG_ICR,
++		      mmio_read_32(SUNXI_CE_BASE + CE_REG_ICR) | BIT(CE_RNG_FLOW));
++
++	/* Clear any stale completion, point the queue at the descriptor. */
++	mmio_write_32(SUNXI_CE_BASE + CE_REG_ISR, BIT(CE_RNG_FLOW));
++	mmio_write_32(SUNXI_CE_BASE + CE_REG_TDQ, ce_word_addr(t));
++	dsbsy();
++
++	/* Start: bit0 = load, plus the algorithm id in bits[14:8] as the
++	 * H6 task-load register expects. */
++	mmio_write_32(SUNXI_CE_BASE + CE_REG_TLR,
++		      1U | ((CE_ALG_TRNG_V2 & 0x7fU) << 8));
++
++	for (i = 0; i < CE_POLL_ITERATIONS; i++) {
++		status = mmio_read_32(SUNXI_CE_BASE + CE_REG_ISR);
++		if (status & BIT(CE_RNG_FLOW))
++			break;
++	}
++
++	esr = mmio_read_32(SUNXI_CE_BASE + CE_REG_ESR);
++
++	/* Always clear the completion status so the CE interrupt line does
++	 * not stay asserted into the normal world, even on timeout. */
++	mmio_write_32(SUNXI_CE_BASE + CE_REG_ISR, BIT(CE_RNG_FLOW));
++
++	if (i == CE_POLL_ITERATIONS) {
++		ce_quiesce();			/* timed out; abort in-flight DMA */
++		return false;
++	}
++
++	if (CE_ESR_FLOW_ERR(esr, CE_RNG_FLOW) != 0U) {
++		ce_quiesce();
++		return false;
++	}
++
++	/* The engine wrote ce_out_buf behind the caches; drop stale lines
++	 * before the CPU reads it. */
++	inv_dcache_range((uintptr_t)ce_out_buf, sizeof(ce_out_buf));
++	dsbsy();
++
++	if (!ce_output_healthy()) {
++		ce_quiesce();		/* constant: dead source or no DMA write */
++		return false;
++	}
++
++	if (have_last &&
++	    memcmp(ce_out_buf, last_block, sizeof(ce_out_buf)) == 0) {
++		ce_quiesce();		/* repeated the previous block: stuck */
++		return false;
++	}
++	memcpy(last_block, ce_out_buf, sizeof(last_block));
++	have_last = true;
++
++	return true;
++}
++
++/*
++ * Return 8 bytes of entropy. Serves from the pool, refilling from the
++ * engine when empty. Returns false (framework -> NO_ENTROPY) on any
++ * hardware failure.
++ */
++bool plat_get_entropy(uint64_t *out)
++{
++	assert(out != NULL);
++	assert(!check_uptr_overflow((uintptr_t)out, sizeof(*out)));
++
++	if (entropy_avail < sizeof(*out)) {
++		if (!ce_run_trng())
++			return false;
++		memcpy(entropy_pool, ce_out_buf, sizeof(entropy_pool));
++		entropy_avail = sizeof(entropy_pool);
++	}
++
++	entropy_avail -= sizeof(*out);
++	memcpy(out, &entropy_pool[entropy_avail], sizeof(*out));
++
++	return true;
++}
++
++void plat_entropy_setup(void)
++{
++	/*
++	 * Self-test before advertising the TRNG: publish the SVC UUID only
++	 * after two draws succeed. The UUID is what makes the framework
++	 * answer TRNG SMCs and what U-Boot/Linux probe to bind their RNG
++	 * drivers, so a broken engine leaves it null -> the framework returns
++	 * NOT_IMPLEMENTED -> no RNG device binds -> the normal world skips
++	 * seeding entirely. A runtime NO_ENTROPY is made non-fatal separately,
++	 * by the bounded retry in U-Boot's SMCCC RNG driver (uboot/patches/0004).
++	 *
++	 * Two draws are required because the stuck-at check (a block equal to
++	 * the previous one) can only run once a previous block exists: the
++	 * first draw is checked for a constant pattern but not for repetition.
++	 * A CE frozen on a fixed non-constant block would pass the first draw,
++	 * so the seed handed to U-Boot must be the second, repetition-checked
++	 * block. It is retained in the pool so U-Boot's first requests (the
++	 * KASLR seed, before Linux runs) need no additional boot-time CE task.
++	 */
++	if (ce_run_trng() && ce_run_trng()) {
++		plat_trng_uuid = _plat_trng_uuid;
++		memcpy(entropy_pool, ce_out_buf, sizeof(entropy_pool));
++		entropy_avail = sizeof(entropy_pool);
++	} else {
++		entropy_avail = 0U;
++	}
++}
