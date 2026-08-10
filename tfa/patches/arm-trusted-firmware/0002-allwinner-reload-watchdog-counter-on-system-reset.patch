@@ -1,0 +1,53 @@
+From: Nerves KickPi K2B <nerves@kickpi-k2b>
+Subject: [PATCH] allwinner: reload the watchdog counter on system reset
+
+The native PSCI SYSTEM_RESET handler armed the watchdog by writing the
+config and mode registers but never reloaded the counter. On H616/H618
+enabling the mode register alone does not start the countdown, so the
+watchdog never fired: the handler waited, printed "System reset failed"
+and panicked, leaving the board hung. Any PSCI reboot reaching BL31 --
+the kernel's panic=10 auto-reboot, a clean reboot, an A/B revert -- hit
+this.
+
+Reload the counter through the control register (bit 0, guarded by the
+0x0a57 key) after enabling the watchdog, and hold the enable asserted
+until the reset lands, mirroring the mainline sunxi_wdt driver's restart
+sequence. The mmio_write to the config/mode registers needs no key on
+this SoC (the kernel binds the sun6i-a31-wdt fallback, key 0).
+---
+diff --git a/plat/allwinner/common/sunxi_native_pm.c b/plat/allwinner/common/sunxi_native_pm.c
+index 148f50e..6d1f46c 100644
+--- a/plat/allwinner/common/sunxi_native_pm.c
++++ b/plat/allwinner/common/sunxi_native_pm.c
+@@ -18,6 +18,9 @@
+ #define SUNXI_WDOG0_CFG_REG		(SUNXI_R_WDOG_BASE + 0x0014)
+ #define SUNXI_WDOG0_MODE_REG		(SUNXI_R_WDOG_BASE + 0x0018)
+
++/* Reload the watchdog counter (bit 0), guarded by the 0x0a57 key. */
++#define SUNXI_WDOG0_CTRL_RELOAD		((0x0a57 << 1) | 1)
++
+ static int sunxi_pwr_domain_on(u_register_t mpidr)
+ {
+ 	sunxi_cpu_on(mpidr);
+@@ -59,8 +62,19 @@ static void __dead2 sunxi_system_reset(void)
+ 	mmio_write_32(SUNXI_WDOG0_CFG_REG, 1);
+ 	/* Enable the watchdog with the shortest timeout (0.5 seconds) */
+ 	mmio_write_32(SUNXI_WDOG0_MODE_REG, (0 << 4) | 1);
+-	/* Wait for twice the watchdog timeout before panicking */
+-	mdelay(1000);
++	/*
++	 * Enabling the mode register does not start the counter on H616/H618;
++	 * it must be reloaded through the control register (guarded by the
++	 * 0x0a57 key). Without this the watchdog never fires and the reset
++	 * silently fails. This mirrors the mainline sunxi_wdt restart path.
++	 */
++	mmio_write_32(SUNXI_WDOG0_CTRL_REG, SUNXI_WDOG0_CTRL_RELOAD);
++
++	/* Hold the watchdog enabled until the reset takes effect. */
++	for (unsigned int i = 0; i < 200; i++) {
++		mmio_write_32(SUNXI_WDOG0_MODE_REG, (0 << 4) | 1);
++		mdelay(5);
++	}
+
+ 	ERROR("PSCI: System reset failed\n");
+ 	panic();
