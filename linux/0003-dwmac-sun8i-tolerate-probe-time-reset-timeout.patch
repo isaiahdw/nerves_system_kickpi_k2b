@@ -1,0 +1,31 @@
+From: Isaiah <isaiahdw@gmail.com>
+Subject: [PATCH] net: stmmac: dwmac-sun8i: do not fail probe on the MAC reset
+
+No PHY is attached at probe time, so a PHY that only outputs its
+RGMII clock after driver initialization (Maxio MAE0621A) cannot
+satisfy the reset yet. The DMA reset at first open repeats it once
+the PHY driver has run.
+
+---
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c	2026-08-09 15:36:15
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c	2026-08-09 15:36:15
+@@ -1226,9 +1226,17 @@
+ 			goto dwmac_mux;
+ 		}
+ 	} else {
++		/* With a PHY whose RGMII clock output only starts once its
++		 * driver has initialized it (Maxio MAE0621A), this reset
++		 * cannot succeed yet: no PHY is attached during probe. The
++		 * MAC is reset again by the DMA reset on first open, after
++		 * the PHY driver has run, so do not fail the probe over it.
++		 */
+ 		ret = sun8i_dwmac_reset(priv);
+-		if (ret)
+-			goto dwmac_remove;
++		if (ret) {
++			dev_warn(&pdev->dev, "MAC reset deferred to first open\n");
++			ret = 0;
++		}
+ 	}
+ 
+ 	pm_runtime_put(&pdev->dev);
