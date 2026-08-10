@@ -1,0 +1,10 @@
+config BR2_PACKAGE_SEEKWAVE_FIRMWARE
+	bool "seekwave-firmware"
+	help
+	  Firmware for the Seekwave SWT6621S WiFi/BT module (VS6621S,
+	  the KickPi K2B rev 2.2 radio). The driver requests the files
+	  by bare name, so they install directly into /lib/firmware.
+	  From the KickPi SDK, as redistributed in pyavitz's
+	  armbian-firmware collection, pinned by commit.
+
+	  https://github.com/pyavitz/armbian-firmware
