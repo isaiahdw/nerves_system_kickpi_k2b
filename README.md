@@ -125,6 +125,62 @@ Or use it as the target system of a Nerves project:
 Write firmware to an SD card with `fwup` / `mix burn` as usual; update a
 running board over SSH with `mix upload`.
 
+## Flashing the eMMC over USB (FEL)
+
+The H618 boot ROM's FEL mode loads U-Boot into RAM over the USB-C OTG
+port; U-Boot then exposes the eMMC to the host as a USB disk for `fwup`.
+No SD card or bootable media is needed.
+
+### Host setup (macOS)
+
+`sunxi-fel` has no Homebrew formula; build it from source:
+
+```sh
+brew install libusb pkg-config
+git clone https://github.com/linux-sunxi/sunxi-tools.git
+cd sunxi-tools && make tools
+```
+
+### Procedure
+
+1. Disconnect the serial adapter from the board. Stray current from an
+   attached adapter back-powers the SoC and blocks FEL entry (and can
+   corrupt the USB transfers).
+2. Hold the recovery button (PC2, next to the GPIO header), plug the
+   USB-C port into the host, then release the button. Verify:
+
+   ```sh
+   sunxi-fel ver   # AWUSBFEX soc=00001823(H616) ...
+   ```
+
+3. Load U-Boot into RAM:
+
+   ```sh
+   sunxi-fel uboot u-boot-sunxi-with-spl.bin
+   ```
+
+   The image is in the built system artifact under `images/`. U-Boot
+   detects the FEL boot (`fel_booted=1`) and starts USB mass storage
+   automatically — within a few seconds the eMMC enumerates on the host
+   as an external disk. macOS asks for permission to access it; click
+   Allow.
+
+4. Write the firmware (check the disk number with `diskutil list
+   external physical` first):
+
+   ```sh
+   diskutil unmountDisk force /dev/diskN
+   fwup -a -t complete -d /dev/rdiskN -i my_app.fw
+   ```
+
+5. Unplug USB-C and power the board normally. The boot ROM boots the
+   eMMC whenever no bootable SD card is present. The application
+   partition is sized at first boot to fill the eMMC.
+
+If a transfer times out or `sunxi-fel ver` stops answering, the FEL
+state is wedged: power-cycle the board (with the serial adapter
+disconnected) and re-enter FEL.
+
 ## Serial console
 
 UART0 at 115200 8N1 on the 20-pin GPIO header: pin 15 = board RX,
