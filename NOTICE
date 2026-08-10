@@ -1,0 +1,24 @@
+# Licensing map
+
+This repository combines content under several licenses. The full license
+texts are in LICENSES/.
+
+| Content | License |
+| --- | --- |
+| Build configuration, fwup configs, scripts, docs (this project's own files) | GPL-2.0-or-later |
+| `linux/0001-*.patch` (device tree), `linux/0002/0003-*.patch` (Maxio PHY driver, dwmac-sun8i fix) | GPL-2.0-only (kernel license) |
+| `linux/0004-*.patch` (Seekwave VS6621S driver tree, vendor GPL source) | GPL-2.0 per the SPDX identifiers in the source files |
+| `uboot/patches/*.patch` (board + Armbian patches) | GPL-2.0-or-later (U-Boot license) |
+
+Downloaded at build time (not in this repository): the Linux kernel
+(GPL-2.0-only), U-Boot (GPL-2.0-or-later), Trusted Firmware-A
+(BSD-3-Clause), the Seekwave SWT6621S firmware blobs, and Buildroot
+packages (various).
+
+The Seekwave firmware is proprietary vendor firmware originating in
+the KickPi SDK, fetched at build time from pyavitz/armbian-firmware
+(pinned by commit and SHA-256). No redistribution grant from the
+rights holder could be verified, so the blobs are not in this
+repository and are excluded from legal-info; note that a built system
+artifact still contains them, which is a decision point before
+publishing artifacts publicly.
