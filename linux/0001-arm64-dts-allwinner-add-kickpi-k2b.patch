@@ -22,7 +22,7 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/Makefile b/arch/arm64/boot/dts/allwinn
 diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts
 --- a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts	1969-12-31 17:00:00
 +++ b/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts	2026-08-09 12:52:10
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,404 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * KickPi K2B rev 2.2 (Allwinner H618, DDR3L, eMMC, Seekwave WiFi/BT)
@@ -62,7 +62,7 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm6
 +
 +	connector {
 +		compatible = "hdmi-connector";
-+		type = "d";
++		type = "a";
 +
 +		port {
 +			hdmi_con_in: endpoint {
@@ -75,9 +75,9 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm6
 +		compatible = "gpio-keys-polled";
 +		poll-interval = <100>;
 +
-+		button-power {
-+			label = "power";
-+			linux,code = <KEY_POWER>;
++		button-recovery {
++			label = "recovery";
++			linux,code = <KEY_VENDOR>;
 +			gpios = <&pio 2 2 GPIO_ACTIVE_LOW>; /* PC2 */
 +		};
 +	};
@@ -148,15 +148,18 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm6
 +	status = "okay";
 +};
 +
-+&ehci0 {
-+	status = "okay";
-+};
-+
++/* ehci0/ohci0 share PHY0 with the MUSB USB-C peripheral; leave them
++ * on the dtsi default (disabled) */
 +&ehci1 {
 +	status = "okay";
 +};
 +
 +&ehci2 {
++	status = "okay";
++};
++
++/* Header USB pair (pins 18/20) */
++&ehci3 {
 +	status = "okay";
 +};
 +
@@ -200,9 +203,9 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm6
 +	pinctrl-0 = <&i2c3_ph_pins>;
 +	pinctrl-names = "default";
 +
-+	/* TCS8563 (PCF8563-compatible), battery-backed via BAT54C */
++	/* HYM8563TS, battery-backed via BAT54C */
 +	ext_rtc: rtc@51 {
-+		compatible = "nxp,pcf8563";
++		compatible = "haoyu,hym8563";
 +		reg = <0x51>;
 +		#clock-cells = <0>;
 +	};
@@ -262,7 +265,7 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm6
 +	};
 +};
 +
-+/* PC0 is routed to the GPIO header (spi0), not the eMMC */
++/* PC0 is the eMMC data strobe, unused at HS200 */
 +&mmc2_pins {
 +	pins = "PC1", "PC5", "PC6",
 +	       "PC8", "PC9", "PC10", "PC11",
@@ -280,15 +283,15 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm6
 +	vqmmc-supply = <&reg_aldo1>;
 +};
 +
-+&ohci0 {
-+	status = "okay";
-+};
-+
 +&ohci1 {
 +	status = "okay";
 +};
 +
 +&ohci2 {
++	status = "okay";
++};
++
++&ohci3 {
 +	status = "okay";
 +};
 +
@@ -318,12 +321,21 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm6
 +
 +/* The 20-pin header routes pwm1 (pin 10, PH3) and pwm2 (pin 8, PH2),
 + * shared with uart5/i2c2. Controller from the out-of-tree driver
-+ * (linux/0005/0006); channels are consumer-less here — export via
++ * (linux/0005/0006), which takes each channel's pinctrl from the
++ * channel child; channels are consumer-less here — export via
 + * /sys/class/pwm or map in an overlay/app.
 + */
 +&pwm {
 +	status = "okay";
-+	pinctrl-0 = <&pwm1_ph_pin>, <&pwm2_ph_pin>;
++};
++
++&pwm1 {
++	pinctrl-0 = <&pwm1_ph_pin>;
++	pinctrl-names = "default";
++};
++
++&pwm2 {
++	pinctrl-0 = <&pwm2_ph_pin>;
 +	pinctrl-names = "default";
 +};
 +

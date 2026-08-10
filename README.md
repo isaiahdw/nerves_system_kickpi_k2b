@@ -25,7 +25,7 @@ instead.
 | Ethernet | `eth0`, gigabit — Maxio vendor PHY driver (linux/0002/0003) |
 | WiFi | `wlan0` — Seekwave vendor driver (linux/0004) + firmware, autoloads |
 | Bluetooth | skwbt module loads; stack bring-up not attempted yet |
-| USB | 2x USB 2.0 host; USB-C OTG (gadget drivers not enabled) |
+| USB | 2x USB 2.0 host + header USB pair; USB-C peripheral (gadget) |
 | HDMI | DE33 pipeline (linux/0101-0141): kernel console + `/dev/fb0`, KMS |
 | GPU | Panfrost kernel driver; no Mesa userspace in the image |
 | RTC | Battery-backed TCS8563 on i2c3, `rtc0` (SoC RTC is `rtc1`) |
@@ -52,8 +52,10 @@ at the new slot on each upgrade (see the recovery caveat below for the
 automatic-revert case).
 
 The H618 boot ROM tries the SD card before the eMMC, so an SD card built
-from this system always boots regardless of eMMC contents. Making the
-eMMC the target device is future work.
+from this system always boots regardless of eMMC contents. The boot
+script selects kernel, dtb and root from the boot medium; full
+eMMC-primary operation (environment writes, application data and the
+extlinux fallback all still name the SD paths) is future work.
 
 ## Board support provenance
 

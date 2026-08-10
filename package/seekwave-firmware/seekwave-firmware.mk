@@ -23,7 +23,8 @@ SEEKWAVE_FIRMWARE_EXTRA_DOWNLOADS = \
 	SWT6621S_SEEKWAVE_R04000.bin \
 	SWT6621S_SEEKWAVE_R04000.ini \
 	SWT6621S_SEEKWAVE_R04001.bin \
-	SWT6621S_SEEKWAVE_R04001.ini
+	SWT6621S_SEEKWAVE_R04001.ini \
+	https://raw.githubusercontent.com/retro98boy/seekwave-swt6621s/b1b15016119cb21965fc64dd374e42f46f011bb4/drivers/swtbt4l/sv6160lite.nvbin
 # Proprietary vendor blobs. No first-party redistribution grant could
 # be verified (Seekwave publishes no firmware downloads or terms; the
 # KickPi SDK states none), so these are fetched at build time rather
@@ -33,8 +34,11 @@ SEEKWAVE_FIRMWARE_EXTRA_DOWNLOADS = \
 SEEKWAVE_FIRMWARE_LICENSE = PROPRIETARY (Seekwave)
 SEEKWAVE_FIRMWARE_REDISTRIBUTE = NO
 
+# The BT NV config comes from KickPi's driver repo (full URL above);
+# the HCI driver requests sv6160lite.nvbin by name and fails BT init
+# without it.
 SEEKWAVE_FIRMWARE_ALL_FILES = \
-	$(SEEKWAVE_FIRMWARE_SOURCE) $(SEEKWAVE_FIRMWARE_EXTRA_DOWNLOADS)
+	$(SEEKWAVE_FIRMWARE_SOURCE) $(notdir $(SEEKWAVE_FIRMWARE_EXTRA_DOWNLOADS))
 
 define SEEKWAVE_FIRMWARE_EXTRACT_CMDS
 	for f in $(SEEKWAVE_FIRMWARE_ALL_FILES); do \
