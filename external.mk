@@ -68,6 +68,12 @@ NERVES_LINUX_PATCH_HASH = \
 		$(NERVES_DEFCONFIG_DIR)/linux/nerves.config)
 NERVES_LINUX_PATCH_STAMP = $(LINUX_DIR)/.nerves-linux-patch-hash
 
+# The env image: mkenvimage runs once at host-uboot-tools install, so
+# an edited uboot.env otherwise never reaches uboot-env.bin.
+NERVES_UBOOT_ENV_HASH = \
+	$(call nerves-hash,$(NERVES_DEFCONFIG_DIR)/uboot/uboot.env)
+NERVES_UBOOT_ENV_STAMP = $(HOST_UBOOT_TOOLS_DIR)/.nerves-env-hash
+
 # U-Boot: uboot/patches/*.patch, applied at extract, and the config
 # fragment, merged at configure.
 NERVES_UBOOT_INPUT_HASH = \
@@ -85,6 +91,7 @@ NERVES_SEEKWAVE_FW_STAMP = $(NERVES_SEEKWAVE_FW_DIR)/.nerves-pkg-hash
 NERVES_STALE_DISCARDED := \
 	$(call nerves-discard-if-stale,$(LINUX_DIR),$(NERVES_LINUX_PATCH_STAMP),$(NERVES_LINUX_PATCH_HASH)) \
 	$(call nerves-discard-if-stale,$(UBOOT_DIR),$(NERVES_UBOOT_STAMP),$(NERVES_UBOOT_INPUT_HASH)) \
+	$(call nerves-discard-if-stale,$(HOST_UBOOT_TOOLS_DIR),$(NERVES_UBOOT_ENV_STAMP),$(NERVES_UBOOT_ENV_HASH)) \
 	$(call nerves-discard-if-stale,$(NERVES_SEEKWAVE_FW_DIR),$(NERVES_SEEKWAVE_FW_STAMP),$(NERVES_SEEKWAVE_FW_HASH))
 
 define NERVES_LINUX_RECORD_PATCH_HASH
@@ -96,6 +103,11 @@ define NERVES_UBOOT_RECORD_INPUT_HASH
 	echo $(NERVES_UBOOT_INPUT_HASH) > $(NERVES_UBOOT_STAMP)
 endef
 UBOOT_POST_PATCH_HOOKS += NERVES_UBOOT_RECORD_INPUT_HASH
+
+define NERVES_UBOOT_ENV_RECORD_HASH
+	echo $(NERVES_UBOOT_ENV_HASH) > $(NERVES_UBOOT_ENV_STAMP)
+endef
+HOST_UBOOT_TOOLS_POST_INSTALL_HOOKS += NERVES_UBOOT_ENV_RECORD_HASH
 
 define NERVES_SEEKWAVE_FW_RECORD_HASH
 	echo $(NERVES_SEEKWAVE_FW_HASH) > $(NERVES_SEEKWAVE_FW_STAMP)

@@ -19,17 +19,20 @@ instead.
 
 | Feature | Status |
 | --- | --- |
-| CPU | 4x Cortex-A53, mainline OPP table |
+| CPU | 4x Cortex-A53, DVFS 480-1416 MHz (speed-bin OPPs) |
 | SD card | mmcblk0 (the boot device) |
-| eMMC | mmcblk2, HS200 (not yet the boot device) |
+| eMMC | mmcblk2, HS200; the boot script follows the boot medium |
 | Ethernet | `eth0`, gigabit — Maxio vendor PHY driver (linux/0002/0003) |
 | WiFi | `wlan0` — Seekwave vendor driver (linux/0004) + firmware, autoloads |
 | Bluetooth | skwbt module loads; stack bring-up not attempted yet |
 | USB | 2x USB 2.0 host; USB-C OTG (gadget drivers not enabled) |
+| HDMI | DE33 pipeline (linux/0101-0141): kernel console + `/dev/fb0`, KMS |
+| GPU | Panfrost kernel driver; no Mesa userspace in the image |
+| RTC | Battery-backed TCS8563 on i2c3, `rtc0` (SoC RTC is `rtc1`) |
+| PWM | 6-channel controller; pwm1/pwm2 on header pins 10/8 |
+| IR | Receiver on PH10, NEC decode |
 | UART console | UART0, 115200 — GPIO header pins 15 (RX) / 17 (TX) / 19 (GND) |
 | LED | Blue status LED (PI16), heartbeat trigger |
-| HDMI | No mainline display support for the H616/H618 yet |
-| GPU | Panfrost kernel driver; no Mesa userspace in the image |
 
 ## Boot flow and disk layout
 
@@ -94,6 +97,13 @@ revert switches the Nerves environment but does not rewrite
 `extlinux/extlinux.conf`, so until the next successful upgrade the
 fallback file may still point at the rejected slot. It only matters if
 the environment is also lost — a double failure.
+
+## Release artifacts
+
+No prebuilt system artifacts are published: the Seekwave WiFi firmware
+has no documented redistribution grant, and a built artifact contains
+those blobs. Build from source instead — the blobs are fetched at
+build time with pinned hashes and never enter this repository.
 
 ## Building
 
