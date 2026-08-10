@@ -1,0 +1,24 @@
+sunxi: use the MMC environment driver when booted over FEL
+
+env_get_location() has no environment location for BOOT_DEVICE_BOARD
+(FEL boot) unless ENV_IS_IN_FAT, ENV_IS_IN_UBI or ENV_IS_NOWHERE is
+enabled. With only ENV_IS_IN_MMC, env_init() finds no driver at
+priority 0 and returns -ENODEV, and the pre-relocation init sequence
+stops before the console exists.
+
+Return ENVL_MMC for FEL boots. When no card is present the load fails
+into the default environment, which is the right behavior for a
+RAM-loaded U-Boot.
+
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -167,6 +167,8 @@
+ 			return ENVL_FAT;
+ 		break;
+ 	case BOOT_DEVICE_BOARD:
++		if (IS_ENABLED(CONFIG_ENV_IS_IN_MMC))
++			return ENVL_MMC;
+ 		break;
+ 	default:
+ 		break;
+
