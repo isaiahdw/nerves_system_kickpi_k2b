@@ -1,0 +1,36 @@
+From: Isaiah <isaiahdw@gmail.com>
+Subject: [PATCH] watchdog: sunxi_wdt: adopt a bootloader-enabled watchdog
+
+The probe unconditionally stopped the watchdog, so a watchdog armed
+by the bootloader (U-Boot WATCHDOG_AUTOSTART) was disabled before the
+watchdog core could take it over, leaving the whole pre-userspace boot
+unguarded. If the mode register shows the watchdog running, mark it
+WDOG_HW_RUNNING and leave it alone so the core keeps it alive
+(WATCHDOG_HANDLE_BOOT_ENABLED) until userspace opens the device, and
+resets if that never happens (WATCHDOG_OPEN_TIMEOUT). A boot hang before
+the watchdog daemon starts is then caught and recovered.
+---
+--- a/drivers/watchdog/sunxi_wdt.c
++++ b/drivers/watchdog/sunxi_wdt.c
+@@ -286,7 +286,20 @@
+ 
+ 	watchdog_set_drvdata(&sunxi_wdt->wdt_dev, sunxi_wdt);
+ 
+-	sunxi_wdt_stop(&sunxi_wdt->wdt_dev);
++	/*
++	 * If the bootloader already started the watchdog (U-Boot
++	 * WATCHDOG_AUTOSTART), adopt it instead of stopping it: mark it running
++	 * so the core keeps pinging it (WATCHDOG_HANDLE_BOOT_ENABLED) until
++	 * userspace opens the device, and resets the board if that never
++	 * happens (WATCHDOG_OPEN_TIMEOUT). This guards the pre-userspace boot
++	 * window; a hang before the watchdog daemon starts is otherwise never
++	 * caught.
++	 */
++	if (readl(sunxi_wdt->wdt_base + sunxi_wdt->wdt_regs->wdt_mode) &
++	    WDT_MODE_EN)
++		set_bit(WDOG_HW_RUNNING, &sunxi_wdt->wdt_dev.status);
++	else
++		sunxi_wdt_stop(&sunxi_wdt->wdt_dev);
+ 
+ 	watchdog_stop_on_reboot(&sunxi_wdt->wdt_dev);
+ 	err = devm_watchdog_register_device(dev, &sunxi_wdt->wdt_dev);
