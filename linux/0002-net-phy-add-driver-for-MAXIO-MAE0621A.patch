@@ -18,7 +18,7 @@
 +	 * Provide RX CLK for Rockchip's DWMAC otherwise the controller will
 +	 * fail to initialize with "DMA engine initialization failed".
 +	 */
-+	if (ndev->phydev->drv->config_init) {
++	if (ndev->phydev && ndev->phydev->drv && ndev->phydev->drv->config_init) {
 +		if (ndev->phydev->phy_id == MAXIO_PHY_MAE0621A_Q2C_ID ||
 +		    ndev->phydev->phy_id == MAXIO_PHY_MAE0621A_Q3C_ID)
 +			ndev->phydev->drv->config_init(ndev->phydev);

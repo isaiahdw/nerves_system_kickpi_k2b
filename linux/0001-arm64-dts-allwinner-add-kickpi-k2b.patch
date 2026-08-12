@@ -203,7 +203,7 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm6
 +	pinctrl-0 = <&i2c3_ph_pins>;
 +	pinctrl-names = "default";
 +
-+	/* HYM8563TS, battery-backed via BAT54C */
++	/* AnalogTek AT8563S, a PCF8563-compatible RTC; battery-backed via BAT54C */
 +	ext_rtc: rtc@51 {
 +		compatible = "haoyu,hym8563";
 +		reg = <0x51>;
@@ -346,7 +346,7 @@ diff -Nur a/arch/arm64/boot/dts/allwinner/sun50i-h618-kickpi-k2b.dts b/arch/arm6
 +		reg = <0x36>;
 +		#interrupt-cells = <1>;
 +		interrupt-controller;
-+		interrupt-parent = <&pio>;
++		/* AXP313A IRQ (pin 11) is wired only to test point TP5, not to the H618 -- no SoC interrupt */
 +
 +		vin1-supply = <&reg_vcc5v>;
 +		vin2-supply = <&reg_vcc5v>;
