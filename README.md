@@ -5,30 +5,22 @@ Nerves system for the [KickPi K2B](https://www.kickpi.com/product/k2b/)
 Cortex-A53, Mali-G31 MP2, 2 GB DDR3L, eMMC, gigabit Ethernet, Seekwave
 WiFi 5/BT, USB-C power).
 
-This system supports the rev 2.2 hardware:
-
-| | rev 1.x | rev 2.2 (this system) |
-| --- | --- | --- |
-| DRAM | LPDDR4 | DDR3L-1333 (different U-Boot DRAM config) |
-| Ethernet PHY | (v1 part) at MDIO 0 | Maxio MAE0621A-Q2C at MDIO 0 |
-| WiFi/BT | AIC8800 module | Seekwave VS6621S (SDIO 1FFE:6621) |
-
-A rev 1.x board will not boot this image (the SPL stops at DRAM init);
-it needs the LPDDR4 U-Boot defconfig from the Armbian board support
-instead.
+Only hardware revision 2.2 is supported. It uses DDR3L-1333, a Maxio
+MAE0621A-Q2C Ethernet PHY, and a Seekwave VS6621S WiFi/BT module. This
+image is not compatible with other K2B hardware revisions.
 
 | Feature | Status |
 | --- | --- |
 | CPU | 4x Cortex-A53, DVFS 480-1416 MHz (speed-bin OPPs) |
-| SD card | mmcblk0 (the boot device) |
+| SD card | mmcblk0; preferred by the boot ROM when bootable |
 | eMMC | mmcblk2, HS200; the boot script follows the boot medium |
 | Ethernet | `eth0`, gigabit — Maxio vendor PHY driver (linux/0002/0003) |
 | WiFi | `wlan0` — Seekwave vendor driver (linux/0004) + firmware, autoloads |
 | Bluetooth | skwbt module loads; stack bring-up not attempted yet |
-| USB | 2x USB 2.0 host + header USB pair; USB-C peripheral (gadget) |
+| USB | 2x USB 2.0 host + header USB pair; USB-C OTG (FEL/UMS in U-Boot; no Linux gadget configured) |
 | HDMI | DE33 pipeline (linux/0101-0141): kernel console + `/dev/fb0`, KMS |
 | GPU | Panfrost kernel driver; no Mesa userspace in the image |
-| RTC | Battery-backed TCS8563 on i2c3, `rtc0` (SoC RTC is `rtc1`) |
+| RTC | Battery-backed AnalogTek AT8563S (PCF8563-compatible) on i2c3, `rtc0` (SoC RTC is `rtc1`) |
 | PWM | 6-channel controller; pwm1/pwm2 on header pins 10/8 |
 | IR | Receiver on PH10, NEC decode |
 | UART console | UART0, 115200 — GPIO header pins 15 (RX) / 17 (TX) / 19 (GND) |
@@ -38,25 +30,41 @@ instead.
 ## Boot flow and disk layout
 
 Boot ROM → `u-boot-sunxi-with-spl.bin` (SPL + TF-A BL31 + U-Boot) at the
-fixed 8 KB offset on the SD card → Nerves U-Boot environment at 4 MB →
+fixed 8 KB offset on the boot medium → Nerves U-Boot environment at 4 MB →
 `Image.<slot>` + dtb from the FAT partition → squashfs rootfs.
 
 MBR partitions (GPT would collide with the SPL at 8 KB): p1 FAT32 boot,
 p2/p3 rootfs A/B (squashfs, 512 MB each), p4 application data (f2fs,
-grows to fill the card).
+grows to fill the medium).
+
+The `complete` task initializes the whole medium, including the boot software.
+OTA updates write the inactive rootfs slot, its `Image.<slot>` and DTB into the
+shared FAT partition, the extlinux fallback selector, and the A/B environment —
+never the boot software.
 
 A/B updates follow the standard Nerves model: `nerves_init` in the saved
 environment picks the slot and reverts unvalidated firmware; if the
 environment is missing or corrupt, U-Boot's compiled-in distro boot falls
 back to `extlinux/extlinux.conf` on the FAT partition, which fwup points
-at the new slot on each upgrade (see the recovery caveat below for the
-automatic-revert case).
+at the target slot during an update (see the recovery caveat below for the
+automatic-revert case). The fallback uses `root=PARTUUID=4b326232-0N` (the
+MBR disk signature) rather than a device path, so `rootwait` cannot hang on
+a name that isn't the boot medium. The signature is identical on every
+medium flashed from this image, so keep to a single boot medium — see the
+cloned-media caveat in `fwup.conf`.
 
-The H618 boot ROM tries the SD card before the eMMC, so an SD card built
-from this system always boots regardless of eMMC contents. The boot
-script selects kernel, dtb and root from the boot medium; full
-eMMC-primary operation (environment writes, application data and the
-extlinux fallback all still name the SD paths) is future work.
+Boot is watchdog-guarded end to end: U-Boot arms the SoC watchdog and the
+kernel keeps it running until `nerves_heart` takes over, so a hang before
+userspace resets the board. With an intact saved environment, an unvalidated
+update then reverts on the next boot; validated firmware or a missing/corrupt
+environment is retried instead. This relies on BL31 being able to actually
+reset the SoC — the watchdog-counter reload in `tfa/patches` `0002`, without
+which a PSCI reset silently fails on H616/H618.
+
+The H618 boot ROM tries a bootable SD card before the eMMC, so an SD card
+built from this system takes precedence at boot; the boot script, environment,
+and application data all follow the boot medium. Because cloned SD and eMMC
+share a PARTUUID, keep to a single medium (the caveat above).
 
 ## Hardware entropy
 
@@ -90,7 +98,7 @@ provides, not a secure-world trust boundary.
 The board is not upstream. The support is assembled from:
 
 * `uboot/patches/0001` — mainline U-Boot v2026.01 plus
-  `kickpi_k2b_defconfig`. The DRAM block is the rev 2.2 DDR3L-1333
+  `kickpi_k2b_defconfig`. The DRAM block is the board's DDR3L-1333
   configuration from the vendor SDK (via the Armbian forum);
   `DRAM_CLK=648`, `AXP_DCDC3_VOLT=1360` (DDR3L rail, matched by the
   kernel DTS so the voltage never moves after training).
@@ -98,7 +106,7 @@ The board is not upstream. The support is assembled from:
   power poke (panfrost needs it), THS SRAMC clear (kernel thermal
   needs it), DRAM-detect settle delay.
 * `linux/0001` — the kernel device tree, reduced to nodes that exist in
-  mainline 6.18, with rev 2.2 fixups (PHY reset settle, DRAM rail).
+  mainline 6.18, with the board's PHY reset timing and DRAM rail settings.
 * `linux/0002` — Maxio MAE0621A PHY driver (immortalwrt's 6.18 port of
   the vendor driver), in **crystal clock mode** — without the crystal
   mode register write the PHY's ADC never calibrates and autoneg never
@@ -111,7 +119,7 @@ TF-A is `lts-v2.12.9` with `PLAT=sun50i_h616`.
 
 ## WiFi
 
-The rev 2.2 module is a Seekwave VS6621S. `linux/0004` carries the
+The onboard module is a Seekwave VS6621S. `linux/0004` carries the
 vendor driver tree (from pyavitz's debian-image-builder, with kernel
 6.18 compat and modalias fixes); `package/seekwave-firmware` installs
 the `SWT6621S_*` blobs, with the shared-antenna NV data at the
@@ -122,15 +130,14 @@ Configure with `vintage_net_wifi` as usual.
 
 ## Recovery caveat
 
-The extlinux fallback is best-effort after an automatic revert: the
-revert switches the Nerves environment but does not rewrite
-`extlinux/extlinux.conf`, so until the next successful upgrade the
-fallback file may still point at the rejected slot. It only matters if
-the environment is also lost — a double failure.
+The extlinux fallback is best-effort after an automatic revert. Reverting
+switches the Nerves environment but does not rewrite
+`extlinux/extlinux.conf`, so the fallback may still point at the rejected
+slot. This matters only if the environment is also lost.
 
 ## Release artifacts
 
-No prebuilt system artifacts are published: the Seekwave WiFi firmware
+No prebuilt system artifacts are published: the Seekwave firmware
 has no documented redistribution grant, and a built artifact contains
 those blobs. Build from source instead — the blobs are fetched at
 build time with pinned hashes and never enter this repository.
@@ -164,7 +171,7 @@ No SD card or bootable media is needed.
 `sunxi-fel` has no Homebrew formula; build it from source:
 
 ```sh
-brew install libusb pkg-config
+brew install dtc libusb pkg-config zlib
 git clone https://github.com/linux-sunxi/sunxi-tools.git
 cd sunxi-tools && make tools
 ```
@@ -193,8 +200,9 @@ cd sunxi-tools && make tools
    as an external disk. macOS asks for permission to access it; click
    Allow.
 
-4. Write the firmware (check the disk number with `diskutil list
-   external physical` first):
+4. Write the firmware. The `complete` task erases the selected destination,
+   including its application data. Check the disk number with `diskutil list
+   external physical` first:
 
    ```sh
    diskutil unmountDisk force /dev/diskN
@@ -218,6 +226,6 @@ pin 17 = board TX, pin 19 = GND (the three odd pins at the "20" end).
 
 * Corrupt env: U-Boot distro boot falls back to the extlinux config on
   the FAT partition.
-* Bad SD image: the H618 boot ROM's FEL USB recovery mode is reachable
+* Bad boot media: the H618 boot ROM's FEL USB recovery mode is reachable
   over the USB-C OTG port with no bootable media present (`sunxi-fel`
   from sunxi-tools).

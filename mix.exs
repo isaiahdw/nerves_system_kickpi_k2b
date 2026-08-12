@@ -90,7 +90,7 @@ defmodule NervesSystemKickpiK2b.MixProject do
   defp package do
     [
       files: package_files(),
-      licenses: ["BSD-3-Clause", "GPL-2.0-only", "GPL-2.0-or-later"],
+      licenses: ["BSD-3-Clause", "GPL-2.0-only", "GPL-2.0-or-later", "MIT"],
       links: %{
         "GitHub" => @source_url
       }

@@ -27,7 +27,7 @@
 set -euo pipefail
 
 KEEP=${KEEP:-1}
-IMG=${NERVES_BR_IMAGE:-ghcr.io/nerves-project/nerves_system_br:1.34.0}
+IMG=${NERVES_BR_IMAGE:-ghcr.io/nerves-project/nerves_system_br:1.34.1}
 VOL=${NERVES_BUILD_VOLUME:-$(container volume ls 2>/dev/null |
 	awk '$1 ~ /^nerves_system_kickpi_k2b-/ && $1 !~ /-platform$/ { print $1; exit }')}
 

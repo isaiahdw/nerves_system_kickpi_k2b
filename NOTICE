@@ -6,22 +6,23 @@ texts are in LICENSES/.
 | Content | License |
 | --- | --- |
 | Build configuration, fwup configs, scripts, docs (this project's own files) | GPL-2.0-or-later |
-| `linux/0001-*.patch` (device tree), `linux/0002/0003-*.patch` (Maxio PHY driver, dwmac-sun8i fix) | GPL-2.0-only (kernel license) |
+| `linux/0001-*.patch` (device tree) | GPL-2.0-or-later OR MIT |
+| `linux/0002-*.patch`, `linux/0003-*.patch` (Maxio PHY driver, dwmac-sun8i fix) | GPL-2.0-only (kernel license) |
 | `linux/0004-*.patch` (Seekwave VS6621S driver tree, vendor GPL source) | GPL-2.0 per the SPDX identifiers in the source files |
-| `uboot/patches/*.patch` (board + Armbian patches, PSCI/RNG fixups) | GPL-2.0-or-later (U-Boot license) |
-| `tfa/patches/arm-trusted-firmware/0001-*.patch` (CE TRNG driver) | BSD-3-Clause (TF-A license) — independent implementation, see the file header |
-| `linux/0005/0006-*.patch` (H616 PWM driver + DT nodes) | GPL-2.0-only (kernel license) |
-| `linux/0101-0141-*.patch` (DE33/HDMI display series) | GPL-2.0-only; dt-binding docs dual GPL-2.0-only OR BSD-2-Clause |
+| `uboot/patches/*.patch` (board + Armbian patches, PSCI/RNG fixups) | GPL-2.0-or-later (U-Boot license); the board DTS added by `0001` is GPL-2.0-or-later OR MIT |
+| `tfa/patches/arm-trusted-firmware/0001-*.patch` (CE TRNG driver), `tfa/patches/arm-trusted-firmware/0002-*.patch` (watchdog-reset counter reload) | BSD-3-Clause (TF-A license) — independent implementation, see the file header |
+| `linux/0005-*.patch`, `linux/0006-*.patch` (H616 PWM driver + DT nodes), `linux/0007-*.patch` (sunxi_wdt adopt bootloader-enabled watchdog) | GPL-2.0-only (kernel license) |
+| `linux/0101-0141-*.patch` (DE33/HDMI display series) | GPL-2.0-only and GPL-2.0-or-later; dt-binding docs dual GPL-2.0-only OR BSD-2-Clause |
 
 Downloaded at build time (not in this repository): the Linux kernel
 (GPL-2.0-only), U-Boot (GPL-2.0-or-later), Trusted Firmware-A
 (BSD-3-Clause), the Seekwave SWT6621S firmware blobs, and Buildroot
 packages (various).
 
-The Seekwave firmware is proprietary vendor firmware originating in
-the KickPi SDK, fetched at build time from pyavitz/armbian-firmware
-(pinned by commit and SHA-256). No redistribution grant from the
-rights holder could be verified, so the blobs are not in this
-repository and are excluded from legal-info; note that a built system
-artifact still contains them, which is a decision point before
-publishing artifacts publicly.
+The Seekwave firmware is proprietary vendor firmware fetched at build time
+from pinned third-party sources: pyavitz/armbian-firmware for the SWT6621S
+files and retro98boy/seekwave-swt6621s for `sv6160lite.nvbin`. Every file is
+verified by SHA-256. No redistribution grant from the rights holder could be
+verified, so the blobs are not in this repository and are not redistributed
+by `legal-info`. A built system artifact still contains them and should not
+be published without resolving redistribution rights.

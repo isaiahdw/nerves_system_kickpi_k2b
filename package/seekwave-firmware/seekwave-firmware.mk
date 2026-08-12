@@ -9,6 +9,10 @@
 SEEKWAVE_FIRMWARE_VERSION = 9376f3f259dc36fa7afab44798defa18eb2b6f94
 SEEKWAVE_FIRMWARE_SITE = https://raw.githubusercontent.com/pyavitz/armbian-firmware/$(SEEKWAVE_FIRMWARE_VERSION)
 SEEKWAVE_FIRMWARE_SOURCE = SWT6621S_DRAM_SDIO.bin
+# The R000xx/R040xx entries are the vendor's regulatory/rate-table variants.
+# Some are byte-identical in the upstream collection (R00001 == R04001, both
+# .bin and .ini); each is still fetched under its requested name because
+# skw_boot loads firmware by exact filename.
 SEEKWAVE_FIRMWARE_EXTRA_DOWNLOADS = \
 	SWT6621S_IRAM_SDIO.bin \
 	SWT6621S_NV_SDIO.ini \
@@ -34,8 +38,8 @@ SEEKWAVE_FIRMWARE_EXTRA_DOWNLOADS = \
 SEEKWAVE_FIRMWARE_LICENSE = PROPRIETARY (Seekwave)
 SEEKWAVE_FIRMWARE_REDISTRIBUTE = NO
 
-# The BT NV config comes from KickPi's driver repo (full URL above);
-# the HCI driver requests sv6160lite.nvbin by name and fails BT init
+# The BT NV config comes from the pinned retro98boy/seekwave-swt6621s source
+# above. The HCI driver requests sv6160lite.nvbin by name and fails BT init
 # without it.
 SEEKWAVE_FIRMWARE_ALL_FILES = \
 	$(SEEKWAVE_FIRMWARE_SOURCE) $(notdir $(SEEKWAVE_FIRMWARE_EXTRA_DOWNLOADS))
